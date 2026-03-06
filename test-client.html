@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Signaling Server Test Client</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+    }
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      margin: 15px 0;
+      font-weight: bold;
+    }
+    .status.disconnected {
+      background: #fee;
+      color: #c33;
+    }
+    .status.connected {
+      background: #efe;
+      color: #3c3;
+    }
+    input, button {
+      padding: 10px;
+      margin: 5px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    input {
+      width: 300px;
+    }
+    button {
+      background: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+      padding: 10px 20px;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .log {
+      background: #f9f9f9;
+      border: 1px solid #ddd;
+      padding: 15px;
+      border-radius: 4px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 12px;
+      margin-top: 20px;
+    }
+    .log-entry {
+      margin: 5px 0;
+      padding: 5px;
+    }
+    .log-entry.sent {
+      color: #0066cc;
+    }
+    .log-entry.received {
+      color: #009900;
+    }
+    .log-entry.error {
+      color: #cc0000;
+    }
+    .log-entry.info {
+      color: #666;
+    }
+    .section {
+      margin: 20px 0;
+      padding: 15px;
+      background: #f9f9f9;
+      border-radius: 4px;
+    }
+    .peer-list {
+      margin: 10px 0;
+      padding: 10px;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    .peer-item {
+      padding: 5px;
+      margin: 5px 0;
+      background: #e8f5e9;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔌 Signaling Server Test Client</h1>
+    <p>Use this to test if your signaling server is working correctly.</p>
+
+    <div class="section">
+      <h3>Connection</h3>
+      <div>
+        <label>Server URL:</label><br>
+        <input type="text" id="serverUrl" value="ws://localhost:3000" placeholder="ws://localhost:3000">
+      </div>
+      <div>
+        <label>Your Peer ID:</label><br>
+        <input type="text" id="peerId" value="" placeholder="test-client-123">
+      </div>
+      <button id="connectBtn" onclick="connect()">Connect</button>
+      <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+      
+      <div id="status" class="status disconnected">
+        ⚫ Disconnected
+      </div>
+    </div>
+
+    <div class="section" id="testSection" style="display: none;">
+      <h3>Test Messages</h3>
+      <button onclick="sendTestRegister()">Send Register</button>
+      <button onclick="sendTestOffer()">Send Test Offer</button>
+      <button onclick="sendTestData()">Send Test Data</button>
+    </div>
+
+    <div class="section" id="peersSection" style="display: none;">
+      <h3>Connected Peers</h3>
+      <div id="peerList" class="peer-list">
+        <em>No peers connected</em>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Message Log</h3>
+      <button onclick="clearLog()">Clear Log</button>
+      <div id="log" class="log">
+        <div class="log-entry info">Waiting for connection...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let ws = null;
+    let myPeerId = null;
+    let connectedPeers = [];
+
+    // Generate random peer ID on load
+    document.getElementById('peerId').value = 'test-' + Math.random().toString(36).substring(2, 9);
+
+    function connect() {
+      const serverUrl = document.getElementById('serverUrl').value;
+      myPeerId = document.getElementById('peerId').value;
+
+      if (!serverUrl || !myPeerId) {
+        alert('Please enter server URL and peer ID');
+        return;
+      }
+
+      log('Connecting to ' + serverUrl + '...', 'info');
+
+      ws = new WebSocket(serverUrl);
+
+      ws.onopen = () => {
+        log('✓ WebSocket connected!', 'info');
+        updateStatus(true);
+        
+        // Register this peer
+        sendMessage({
+          type: 'register',
+          peerId: myPeerId
+        });
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          log('◄ RECEIVED: ' + JSON.stringify(data, null, 2), 'received');
+          handleMessage(data);
+        } catch (e) {
+          log('Error parsing message: ' + e.message, 'error');
+        }
+      };
+
+      ws.onerror = (error) => {
+        log('✗ WebSocket error: ' + error, 'error');
+      };
+
+      ws.onclose = () => {
+        log('WebSocket closed', 'info');
+        updateStatus(false);
+        ws = null;
+      };
+    }
+
+    function disconnect() {
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+    }
+
+    function sendMessage(message) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        log('Cannot send - not connected', 'error');
+        return;
+      }
+      
+      const json = JSON.stringify(message);
+      ws.send(json);
+      log('► SENT: ' + json, 'sent');
+    }
+
+    function handleMessage(data) {
+      switch(data.type) {
+        case 'registered':
+          log('✓ Successfully registered with peer ID: ' + data.peerId, 'info');
+          break;
+        
+        case 'peer-list':
+          connectedPeers = data.peers || [];
+          updatePeerList();
+          log('Received peer list: ' + connectedPeers.join(', '), 'info');
+          break;
+        
+        case 'peer-connected':
+          connectedPeers.push(data.peerId);
+          updatePeerList();
+          log('New peer connected: ' + data.peerId, 'info');
+          break;
+        
+        case 'peer-disconnected':
+          connectedPeers = connectedPeers.filter(p => p !== data.peerId);
+          updatePeerList();
+          log('Peer disconnected: ' + data.peerId, 'info');
+          break;
+        
+        case 'offer':
+          log('Received offer from: ' + data.from, 'info');
+          break;
+        
+        case 'answer':
+          log('Received answer from: ' + data.from, 'info');
+          break;
+        
+        case 'ice-candidate':
+          log('Received ICE candidate from: ' + data.from, 'info');
+          break;
+        
+        case 'data':
+          log('Received data message from ' + data.from + ': ' + data.message, 'info');
+          break;
+      }
+    }
+
+    function updateStatus(connected) {
+      const status = document.getElementById('status');
+      const connectBtn = document.getElementById('connectBtn');
+      const disconnectBtn = document.getElementById('disconnectBtn');
+      const testSection = document.getElementById('testSection');
+      const peersSection = document.getElementById('peersSection');
+
+      if (connected) {
+        status.className = 'status connected';
+        status.textContent = '🟢 Connected as: ' + myPeerId;
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+        testSection.style.display = 'block';
+        peersSection.style.display = 'block';
+      } else {
+        status.className = 'status disconnected';
+        status.textContent = '⚫ Disconnected';
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+        testSection.style.display = 'none';
+        peersSection.style.display = 'none';
+        connectedPeers = [];
+        updatePeerList();
+      }
+    }
+
+    function updatePeerList() {
+      const peerListDiv = document.getElementById('peerList');
+      
+      if (connectedPeers.length === 0) {
+        peerListDiv.innerHTML = '<em>No other peers connected</em>';
+      } else {
+        peerListDiv.innerHTML = connectedPeers
+          .map(peer => `<div class="peer-item">👤 ${peer}</div>`)
+          .join('');
+      }
+    }
+
+    function sendTestRegister() {
+      sendMessage({
+        type: 'register',
+        peerId: myPeerId
+      });
+    }
+
+    function sendTestOffer() {
+      if (connectedPeers.length === 0) {
+        alert('No peers to send offer to. Open this page in another tab!');
+        return;
+      }
+      
+      sendMessage({
+        type: 'offer',
+        from: myPeerId,
+        to: connectedPeers[0],
+        offer: {
+          type: 'offer',
+          sdp: 'fake-sdp-for-testing'
+        }
+      });
+    }
+
+    function sendTestData() {
+      const message = prompt('Enter message to send:', 'Hello from test client!');
+      if (message) {
+        sendMessage({
+          type: 'data',
+          from: myPeerId,
+          message: message
+        });
+      }
+    }
+
+    function log(message, type = 'info') {
+      const logDiv = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + type;
+      entry.textContent = new Date().toLocaleTimeString() + ' - ' + message;
+      logDiv.appendChild(entry);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    function clearLog() {
+      document.getElementById('log').innerHTML = '';
+    }
+  </script>
+</body>
+</html>
