@@ -195,10 +195,10 @@ function broadcastPipeMessage(message, excludePeerId) {
 }
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
     console.log(`✓ WebRTC Signaling Server running on port ${PORT}`);
     console.log(`WebSocket URL: ws://localhost:${PORT}`);
-    console.log(`For HTTPS: wss://your-domain.com:${PORT}`);
+    console.log(`For HTTPS: wss://your-domain.com`);
 });
 
 process.on('SIGTERM', () => {
